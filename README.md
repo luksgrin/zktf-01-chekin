@@ -1,0 +1,177 @@
+# zkctf-challenges-template
+
+Template for the zkCTF challenges, based on the first challenge (the introduction challenge) of the competition.
+
+# CTF 1: Checkin
+
+## Setup
+
+- ETH fullnode rpc endpoint: http://47.76.89.7:8545/
+- ETH faucet: http://47.76.89.7:8080/
+- You can reach the contract code here: https://github.com/scalebit/zkCTF-sample1.git
+
+To prep for submission, execute
+
+```bash
+nc 47.76.89.7 20000
+```
+
+The output will be
+
+```bash
+Can you make the isSolved() function return true?
+
+[1] - Create an account which will be used to deploy the challenge contract
+[2] - Deploy the challenge contract using your generated account
+[3] - Get your flag once you meet the requirement
+[4] - Show the contract source code
+[-] input your choice: 
+```
+
+- When selecting `1`, you'll get and address and a token. I'd recommend to store those in an `.env` file. See [`example.env`](example.env).
+- When selecting `2`, you'll have to provide the token obtained in the prior option, and you'll get the address of the contract. Store that one inside an `.env` file too. See [`example.env`](example.env).
+
+## Solution
+
+You may have noticed is that the current repository is a `foundry` project (I'm assuming you have `foundry` installed). Furthermore, it also assumes that you have `snarkjs` installed globally and that you have `python` version 3.6 or higher installed (to execute a utility function later on).
+
+To proceed you must add the challenge repository as a submodule, preferably in the `src` directory:
+
+```bash
+cd src
+git submodule add $CHALLENGE_REPO
+cd ..
+```
+
+where `$CHALLENGE_REPO` is the repository URL (in this case, `https://github.com/scalebit/zkCTF-sample1.git`, as provided in the [Setup](#setup) section).
+
+Also, make sure to run `forge install` to install the dependencies. Another thing we must do before proceeding is to remove one of the multiple SPDX licenses found in the verifier smart contract solidity code, so we can later compile it with forge to test the proof locally before submitting it.
+
+### Circuit compilation
+
+_(Check [the circom docs](https://docs.circom.io/getting-started/compiling-circuits/) for details)_
+
+```bash
+mkdir -p out/checkin.circom
+circom src/zkCTF-sample1/checkin.circom --r1cs --wasm --sym -o out/checkin.circom
+```
+
+### Witness computation
+
+_(Check [the circom docs](https://docs.circom.io/getting-started/computing-the-witness/) for details)_
+
+Let's create an input and compute its witness:
+
+```bash
+echo '{"a": 6, "b": 12}' > out/checkin.circom/input.json
+node out/checkin.circom/checkin_js/generate_witness.js \
+out/checkin.circom/checkin_js/checkin.wasm \
+out/checkin.circom/input.json \
+out/checkin.circom/witness.wtns
+```
+
+### Proof generation
+
+_(Check [the circom docs](https://docs.circom.io/getting-started/proving-circuits/) for details)_
+
+If we look into [`checkin.sol`](src/zkCTF-sample1/checkin.sol), we see that it is a plonk verifier, hence we must create a suitable proof using the plonk schema. We are also given the proving and verification keys in [checkin.zkey](src/zkCTF-sample1/checkin.zkey), so we just need to call:
+
+```bash
+snarkjs plonk prove \
+src/zkCTF-sample1/checkin.zkey \
+out/checkin.circom/witness.wtns \
+out/checkin.circom/proof.json \
+out/checkin.circom/public.json
+```
+
+Now, we want to verify the proof on a smart contract. For that, we need to compute the parameters for the call, like so:
+
+```bash
+snarkjs generatecall \
+out/checkin.circom/public.json \
+out/checkin.circom/proof.json
+```
+
+This will prompt to the terminal the arguments that must be passed along the call to the smart contract.
+
+#### Local verification
+
+##### `forge test`
+
+To run the test smoothly, you must generate a `formatted_calldata.json` file that will be used by the test script. To do so, use the [`format_call.py`](script/format_call.py) script I wrote like so:
+
+```bash
+cd test
+snarkjs generatecall ../out/checkin.circom/public.json ../out/checkin.circom/proof.json | python ../script/format_call.py
+cd ..
+```
+
+this will print the `cast` arguments that may be provided to the verification function call (you may ignore that for now) and generate a `formatted_calldata.json` file in the `test` directory that will be used by the test script.
+
+Now, you can run the test:
+
+```bash
+forge test
+```
+
+and see it pass!
+
+##### Local `anvil`
+
+Time to test it locally. Run a new `anvil` instance:
+
+```bash
+anvil
+```
+
+Then, in another terminal, we'll deploy the verifier:
+
+```bash
+forge script script/checkin.s.sol \
+--rpc-url http://localhost:8545 \
+--private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+--broadcast
+```
+
+_(The privkey used here is from Anvil's default Account 1, so don't worry)_
+
+Which deploys the smart contract at address `0x5fbdb2315678afecb367f032d93f642f64180aa3`. Now, we can call the verifier with the parameters we got from `snarkjs generatecall`. To make it easier to paste it for anvil, you may again use the [`format_call.py`](script/format_call.py) script:
+
+```bash
+snarkjs generatecall out/checkin.circom/public.json out/checkin.circom/proof.json | python script/format_call.py
+```
+
+With the `input.json` we used, the output should be:
+
+```bash
+["8404193722170047529028576978225462393564360734565267715819534954192385372122","11584258744358947446057656701521322787936740406543889338765715092662650835087","20338491880193473006464510605195426191634959320054253416282290305779167351103","8099407176957487984365116325997580054162244872601048915862888468534675645288","14752012997664746422670930297563832375081479477311959856772168816143900322269","10224034491344480551697206480880542862437727095434533413845982420005914255908","1588540316561809884388536799023699385256374466798783336635001747755105759867","21758003809411343811122403078992037479969260469478914473360016559378502730490","19895176165191538387108451679369400309349583033591874653371852813188771681205","292746499306940116336277988371030662179559650540372818638853844694905880370","12619547398043014253685785071894948370838301564195233807656341708392084270390","4027151858538371099933592077761965981657159393783063462598643881565383126383","19916379044204575910170817668973576109704118637731537056763813732280387962899","17503042333998267772916703599513395450919625840349503113582254993421714868789","7400635965689541855085337669067024868209672201719278734962523825428010750171","815023313333381458669077943069741723035990780292159923773525476985099400740","13526346798955209738646011826774850248965165036761731859159801506601356511084","19320146966845435922903652324552042895162735638578102809016486644322811106481","4348155131018076892687656223957095231745160045363512141155827193959614437780","9841261155966001148505091185344524678337294070497732309838697571417423701902","21197083081412131403481857528080773100817172072878889224743949116842126388054","5072281501708535941571242265108914863252176726669385441599755399826113519071","10936307508139541955424196560944099354277414571929558803123121924633074895029","18408327288333841029973616340003864048869702225791554869726715198295729947620"]  ["18"]
+```
+
+Now, we can call the verifier:
+
+```bash
+cast call 0x5fbdb2315678afecb367f032d93f642f64180aa3 "verify(uint256[24],uint256[1])(bool)" ["8404193722170047529028576978225462393564360734565267715819534954192385372122","11584258744358947446057656701521322787936740406543889338765715092662650835087","20338491880193473006464510605195426191634959320054253416282290305779167351103","8099407176957487984365116325997580054162244872601048915862888468534675645288","14752012997664746422670930297563832375081479477311959856772168816143900322269","10224034491344480551697206480880542862437727095434533413845982420005914255908","1588540316561809884388536799023699385256374466798783336635001747755105759867","21758003809411343811122403078992037479969260469478914473360016559378502730490","19895176165191538387108451679369400309349583033591874653371852813188771681205","292746499306940116336277988371030662179559650540372818638853844694905880370","12619547398043014253685785071894948370838301564195233807656341708392084270390","4027151858538371099933592077761965981657159393783063462598643881565383126383","19916379044204575910170817668973576109704118637731537056763813732280387962899","17503042333998267772916703599513395450919625840349503113582254993421714868789","7400635965689541855085337669067024868209672201719278734962523825428010750171","815023313333381458669077943069741723035990780292159923773525476985099400740","13526346798955209738646011826774850248965165036761731859159801506601356511084","19320146966845435922903652324552042895162735638578102809016486644322811106481","4348155131018076892687656223957095231745160045363512141155827193959614437780","9841261155966001148505091185344524678337294070497732309838697571417423701902","21197083081412131403481857528080773100817172072878889224743949116842126388054","5072281501708535941571242265108914863252176726669385441599755399826113519071","10936307508139541955424196560944099354277414571929558803123121924633074895029","18408327288333841029973616340003864048869702225791554869726715198295729947620"] ["18"] --private-key 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d --rpc-url http://localhost:8545
+```
+
+_(The privkey used here is from Anvil's default Account 2, so don't worry)_
+
+which should return `true`! You may kill now the local `anvil` on the other terminal and prep for submission!
+
+### Submission
+
+Okay, now we are sure that we have a valid proof. Time to submit! Grab your favorite test wallet and fund it with some ETH at the provided faucet (see [Setup](#setup)).
+Then, we can call the verifier with the parameters we got from `snarkjs generatecall` (as we did on the local `anvil`), but instead of using the local `anvil` instance, we'll use the provided `rpc` endpoint. Furtermore, we won't be using `cast call` but `cast send` to send the transaction to the network. So, basically, we'll call:
+
+```bash
+cast send $CHALLENGE_ADDRESS "verify(uint256[24],uint256[1])(bool)" ["8404193722170047529028576978225462393564360734565267715819534954192385372122","11584258744358947446057656701521322787936740406543889338765715092662650835087","20338491880193473006464510605195426191634959320054253416282290305779167351103","8099407176957487984365116325997580054162244872601048915862888468534675645288","14752012997664746422670930297563832375081479477311959856772168816143900322269","10224034491344480551697206480880542862437727095434533413845982420005914255908","1588540316561809884388536799023699385256374466798783336635001747755105759867","21758003809411343811122403078992037479969260469478914473360016559378502730490","19895176165191538387108451679369400309349583033591874653371852813188771681205","292746499306940116336277988371030662179559650540372818638853844694905880370","12619547398043014253685785071894948370838301564195233807656341708392084270390","4027151858538371099933592077761965981657159393783063462598643881565383126383","19916379044204575910170817668973576109704118637731537056763813732280387962899","17503042333998267772916703599513395450919625840349503113582254993421714868789","7400635965689541855085337669067024868209672201719278734962523825428010750171","815023313333381458669077943069741723035990780292159923773525476985099400740","13526346798955209738646011826774850248965165036761731859159801506601356511084","19320146966845435922903652324552042895162735638578102809016486644322811106481","4348155131018076892687656223957095231745160045363512141155827193959614437780","9841261155966001148505091185344524678337294070497732309838697571417423701902","21197083081412131403481857528080773100817172072878889224743949116842126388054","5072281501708535941571242265108914863252176726669385441599755399826113519071","10936307508139541955424196560944099354277414571929558803123121924633074895029","18408327288333841029973616340003864048869702225791554869726715198295729947620"] ["18"] --rpc-url http://47.76.89.7:8545/ --private-key $PRIVATE_KEY
+```
+
+_Note: the `PRIVATE_KEY` is the one corresponding to the address you funded with the faucet and you have stored in the `.env` file. However, if this scares you, you may use the `--interactive` flag instead to be prompted for the private key._
+
+Now that the transaction has been sent, we can check if it was successful by calling the `isSolved()` function:
+
+```bash
+cast call $CHALLENGE_ADDRESS "isSolved()(bool)" --rpc-url http://47.76.89.7:8545/
+```
+
+which should return `true`! Now, we can claim our flag by running `nc 47.76.89.7 20000` and selecting `3`, which will prompt a flag of the form `flag{SomeTextHere}`. Use this flag in the [zkctf](https://zkctf.scalebit.xyz/) challenge's corresponding submission form and you're done!
