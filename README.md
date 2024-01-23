@@ -1,7 +1,3 @@
-# zkctf-challenges-template
-
-Template for the zkCTF challenges, based on the first challenge (the introduction challenge) of the competition.
-
 # CTF 1: Checkin
 
 ## Setup
